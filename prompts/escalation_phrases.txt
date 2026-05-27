@@ -1,0 +1,97 @@
+# escalation_phrases.txt
+# One phrase per line. Blank lines and lines starting with # are ignored.
+# These are matched case-insensitively as substrings of the member transcript.
+# A match triggers human-agent escalation in guardrails.py.
+#
+# Categories:
+#   EXPLICIT REQUEST — member directly asks for a human
+#   FRUSTRATION      — strong negative sentiment toward the AI or call
+#   ACCOUNT ACTION   — tasks that require a live agent (disputes, fraud, etc.)
+#   CRISIS           — financial or personal distress requiring human empathy
+#   COMPLAINT        — regulatory / compliance exposure
+
+# ── EXPLICIT REQUEST ──────────────────────────────────────────────────────────
+speak to a human
+speak to a person
+talk to someone
+talk to a real person
+talk to an agent
+transfer me
+connect me to
+get me a representative
+live agent
+real agent
+human please
+i want a person
+let me speak to
+
+# ── FRUSTRATION ───────────────────────────────────────────────────────────────
+this is ridiculous
+this is useless
+you're not helping
+you don't understand
+stop repeating
+i already said
+just forget it
+never mind
+this is a waste of time
+i give up
+
+# ── ACCOUNT ACTION ────────────────────────────────────────────────────────────
+unauthorized charge
+unauthorized transaction
+someone stole
+my card was stolen
+my card is missing
+report fraud
+dispute a charge
+dispute a transaction
+close my account
+close the account
+freeze my account
+unfreeze my account
+change my address
+update my address
+change my phone number
+open a new account
+apply for a loan
+apply for a mortgage
+refinance
+add a beneficiary
+wire transfer
+dispute
+
+# ── CRISIS ────────────────────────────────────────────────────────────────────
+i can't pay my mortgage
+i'm going to lose my home
+i'm about to be evicted
+i can't make my payment
+i've lost my job
+i was laid off
+i got laid off
+i'm behind on
+i'm drowning in debt
+i don't know how i'll survive
+bankruptcy
+filing for bankruptcy
+
+# ── PERSONAL CRISIS (→ 988 + escalation) ─────────────────────────────────────
+kill myself
+end my life
+don't want to live
+thinking about suicide
+hurt myself
+no reason to go on
+can't go on
+
+# ── COMPLAINT / COMPLIANCE ────────────────────────────────────────────────────
+file a complaint
+make a complaint
+report you
+call the regulators
+contact the cfpb
+contact your regulator
+this is illegal
+you violated
+my lawyer
+small claims
