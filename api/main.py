@@ -128,10 +128,19 @@ async def lifespan(app: FastAPI):
     # 1. Opening audio ──────────────────────────────────────────────────────
     OPENING_AUDIO_PATH.parent.mkdir(parents=True, exist_ok=True)
     if not OPENING_AUDIO_PATH.exists():
-        logger.info("Generating opening audio via TTS…")
-        audio_bytes = await synthesize_speech(OPENING_MESSAGE)
-        OPENING_AUDIO_PATH.write_bytes(audio_bytes)
-        logger.info("Opening audio saved → %s", OPENING_AUDIO_PATH)
+        if os.getenv("OPENAI_API_KEY"):
+            try:
+                logger.info("Generating opening audio via TTS…")
+                audio_bytes = await synthesize_speech(OPENING_MESSAGE)
+                OPENING_AUDIO_PATH.write_bytes(audio_bytes)
+                logger.info("Opening audio saved → %s", OPENING_AUDIO_PATH)
+            except Exception as exc:
+                logger.warning("Could not pre-generate opening audio: %s — will synthesise on first call.", exc)
+        else:
+            logger.warning(
+                "OPENAI_API_KEY not set — skipping opening audio pre-generation. "
+                "Set the key and redeploy, or the greeting will be synthesised on the first call."
+            )
     else:
         logger.info("Opening audio already exists at %s — skipping TTS.", OPENING_AUDIO_PATH)
 
