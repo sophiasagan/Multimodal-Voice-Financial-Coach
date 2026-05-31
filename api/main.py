@@ -164,8 +164,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Serve the pre-generated opening audio and any other static assets.
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# Serve static assets only when the directory exists (it may be empty on a
+# fresh deploy before the opening audio is generated at first startup).
+if Path("static").is_dir():
+    app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
