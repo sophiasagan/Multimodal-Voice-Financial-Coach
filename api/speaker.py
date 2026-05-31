@@ -48,7 +48,6 @@ continues rather than crashing.
 
 from __future__ import annotations
 
-import audioop as _audioop_mod  # noqa: F401 — checked below
 import hashlib
 import io
 import logging
