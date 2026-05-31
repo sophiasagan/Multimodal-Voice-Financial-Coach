@@ -52,13 +52,17 @@ st.set_page_config(
 # DB connection  (cached so it is created once per Streamlit session)
 # ─────────────────────────────────────────────────────────────────────────────
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+psycopg2://localhost/cu_coach",
-)
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 @st.cache_resource(show_spinner=False)
 def _get_engine():
+    if not DATABASE_URL:
+        st.error(
+            "**DATABASE_URL is not set.**\n\n"
+            "Add it as an environment variable for this Streamlit service:\n"
+            "```\nDATABASE_URL=postgresql://user:pass@host:5432/cu_coach\n```"
+        )
+        st.stop()
     # Replace asyncpg driver with psycopg2 for sync Streamlit use
     url = DATABASE_URL.replace("+asyncpg", "+psycopg2")
     return create_engine(url, pool_pre_ping=True, connect_args={"connect_timeout": 5})
