@@ -210,12 +210,11 @@ async def voice_incoming(request: Request) -> Response:
     caller_phone = form.get("From",    "unknown")
     logger.info("Inbound call  CallSid=%s  From=%s", call_sid, caller_phone)
 
-    # Absolute URL for the opening audio (Twilio needs a publicly reachable URL)
-    base_url  = str(request.base_url).rstrip("/")
-    audio_url = f"{base_url}/static/opening.mp3"
-
-    # WebSocket URL — prefer PUBLIC_HOST (ngrok / prod domain) over request host
+    # Absolute URL for the opening audio (Twilio requires HTTPS).
+    # Railway terminates TLS at the proxy so request.base_url is http:// internally;
+    # always use PUBLIC_HOST with explicit https:// to get the correct public URL.
     domain     = PUBLIC_HOST or request.headers.get("host", "localhost:8000")
+    audio_url  = f"https://{domain}/static/opening.mp3"
     stream_url = f"wss://{domain}/voice/stream"
 
     # Build TwiML manually (avoids a hard twilio SDK dep at the import level)
