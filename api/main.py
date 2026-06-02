@@ -425,12 +425,15 @@ async def voice_stream(ws: WebSocket) -> None:
                     media_fmt.get("sampleRate"),
                 )
 
+                # Resolve member identity at stream start so the session
+                # record has the correct member_id from the first turn.
+                member = await resolve_member(caller_phone)
+
                 # Initialise Redis session record
                 await session_store.create_session(
                     call_sid=call_sid,
-                    stream_sid=stream_sid,
-                    caller_phone=caller_phone,
-                    start_time=time.time(),
+                    member=member,
+                    phone_e164=caller_phone or "",
                 )
 
             # ── media ────────────────────────────────────────────────────
@@ -504,7 +507,7 @@ async def voice_stream(ws: WebSocket) -> None:
         # Saves conversation summary and flags follow-up items.
         if call_sid:
             try:
-                await session_store.close_session(call_sid)
+                await session_store.end_session(call_sid)
                 logger.info("Session closed  CallSid=%s", call_sid)
             except Exception as exc:
                 logger.warning(
