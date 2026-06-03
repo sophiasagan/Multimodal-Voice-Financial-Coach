@@ -338,14 +338,14 @@ async def voice_stream(ws: WebSocket) -> None:
 
                 # ── 2. Guardrails ────────────────────────────────────────
                 # MUST run before generate_response (CLAUDE.md constraint).
-                guard = await check_guardrails(transcript, call_sid=call_sid)
+                guard = check_guardrails(transcript)
 
-                if guard.escalate:
+                if guard["escalate"]:
                     # Crisis / out-of-scope / human-agent transfer
                     logger.info(
-                        "[%s] Guardrail triggered: %s", call_sid, guard.reason
+                        "[%s] Guardrail triggered: %s", call_sid, guard["escalation_type"]
                     )
-                    response_text = guard.escalation_message
+                    response_text = guard["response_override"]
                 else:
                     # ── 3. Member lookup + account context ───────────────
                     member  = await resolve_member(caller_phone)

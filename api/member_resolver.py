@@ -44,9 +44,16 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://localhost/cu_coach",
+def _asyncpg_url(url: str) -> str:
+    """Ensure the URL uses the asyncpg driver (Railway provides bare postgresql://)."""
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgresql://") and "+asyncpg" not in url and "+psycopg2" not in url:
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    return url
+
+DATABASE_URL = _asyncpg_url(
+    os.getenv("DATABASE_URL", "postgresql+asyncpg://localhost/cu_coach")
 )
 
 # Enable for high-security CUs that require a second verbal factor.
