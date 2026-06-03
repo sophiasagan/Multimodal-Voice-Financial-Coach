@@ -144,19 +144,18 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Opening audio already exists at %s — skipping TTS.", OPENING_AUDIO_PATH)
 
-    # 2. Redis ──────────────────────────────────────────────────────────────
-    redis_client = await aioredis.from_url(
-        REDIS_URL, encoding="utf-8", decode_responses=True
-    )
-    app.state.redis         = redis_client
-    app.state.session_store = SessionStore(redis_client)
-    logger.info("Redis connected: %s", REDIS_URL)
+    # 2. Session store (Redis + DB engine) ────────────────────────────────
+    from .member_resolver import _get_engine
+    store = SessionStore(engine=_get_engine())
+    await store.open()
+    app.state.session_store = store
+    logger.info("SessionStore ready.")
 
     yield  # ← application serves requests here
 
     # Shutdown ──────────────────────────────────────────────────────────────
-    await redis_client.aclose()
-    logger.info("Redis connection closed.")
+    await store.close()
+    logger.info("SessionStore closed.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -352,7 +351,11 @@ async def voice_stream(ws: WebSocket) -> None:
                     context = await build_context(member) if member else ""
 
                     # ── 4. Claude response (≤ 80 words) ─────────────────
-                    history = await session_store.get_history(call_sid)
+                    _session = await session_store.get_session(call_sid)
+                    history  = [
+                        {"role": t["role"], "content": t["content"]}
+                        for t in (_session.get("transcript", []) if _session else [])
+                    ]
                     response_text = await generate_response(
                         transcript=transcript,
                         account_context=context,
@@ -369,7 +372,7 @@ async def voice_stream(ws: WebSocket) -> None:
 
                 # ── 5. TTS → mulaw 8 kHz ────────────────────────────────
                 mp3_bytes   = await synthesize_speech(response_text)
-                mulaw_bytes = await to_mulaw_8k(mp3_bytes)
+                mulaw_bytes = to_mulaw_8k(mp3_bytes)
 
                 # ── 6. Persist turn ──────────────────────────────────────
                 await session_store.append_turn(
