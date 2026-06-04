@@ -202,7 +202,7 @@ async def voice_incoming(request: Request) -> Response:
     Twilio calls this endpoint (HTTP POST) when a member dials the CU's number.
 
     Returns TwiML that:
-      1. Plays the pre-generated opening greeting from /static/opening.mp3.
+      1. Plays the pre-generated opening greeting from /static/opening.wav.
       2. Opens a bidirectional Media Streams WebSocket to /voice/stream.
 
     The caller's phone number is injected into the Stream as a custom parameter
@@ -217,7 +217,7 @@ async def voice_incoming(request: Request) -> Response:
     # Railway terminates TLS at the proxy so request.base_url is http:// internally;
     # always use PUBLIC_HOST with explicit https:// to get the correct public URL.
     domain     = PUBLIC_HOST or request.headers.get("host", "localhost:8000")
-    audio_url  = f"https://{domain}/static/opening.mp3"
+    audio_url  = f"https://{domain}/static/{OPENING_AUDIO_PATH.name}"
     stream_url = f"wss://{domain}/voice/stream"
 
     # Build TwiML manually (avoids a hard twilio SDK dep at the import level)
