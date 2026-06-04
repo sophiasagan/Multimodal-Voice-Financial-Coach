@@ -289,16 +289,20 @@ async def voice_stream(ws: WebSocket) -> None:
         """
         Stream mulaw 8 kHz audio back to Twilio as 20 ms media frames.
 
-        Twilio expects the same format it sends: mulaw, 8 kHz, mono.
-        Frame size matches the 20 ms / 160-byte Twilio default to avoid
-        jitter at the phone handset.
+        Twilio requires real-time pacing — sending faster than playback rate
+        overflows its jitter buffer and causes distorted / muffled audio.
+        Each 160-byte chunk represents 20 ms; we sleep to stay on schedule.
         """
         if not stream_sid:
             logger.warning("Cannot send audio — stream_sid not yet known.")
             return
 
-        CHUNK = 160  # 20 ms @ 8 kHz mulaw
-        for offset in range(0, len(mulaw_bytes), CHUNK):
+        CHUNK          = 160    # 20 ms @ 8 kHz mulaw
+        CHUNK_DURATION = 0.020  # seconds per chunk
+
+        t_start = time.monotonic()
+
+        for i, offset in enumerate(range(0, len(mulaw_bytes), CHUNK)):
             payload = base64.b64encode(mulaw_bytes[offset : offset + CHUNK]).decode()
             await ws.send_text(json.dumps({
                 "event":     "media",
@@ -306,7 +310,14 @@ async def voice_stream(ws: WebSocket) -> None:
                 "media":     {"payload": payload},
             }))
 
-        # Mark frame lets Twilio (and us) know playback is complete.
+            # Sleep until the wall-clock time for the NEXT chunk so we
+            # pace at exactly real-time regardless of send latency.
+            target = t_start + (i + 1) * CHUNK_DURATION
+            sleep  = target - time.monotonic()
+            if sleep > 0.001:
+                await asyncio.sleep(sleep)
+
+        # Mark frame signals end of playback to Twilio.
         await ws.send_text(json.dumps({
             "event":     "mark",
             "streamSid": stream_sid,
