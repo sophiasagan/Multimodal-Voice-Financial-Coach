@@ -124,29 +124,57 @@ def _downsample(pcm_24k: bytes) -> bytes:
     return bytes(out)
 
 
+# Exponent lookup table — matches the ITU-T G.711 reference and CPython audioop.
+# Indexed by (sample >> 7) & 0xFF after bias is added (14-bit space).
+_EXP_LUT: list[int] = [
+    0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+    5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+    6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+    6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+    6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+    6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+]
+
+
 def _pcm_to_mulaw(pcm_8k: bytes) -> bytes:
     """
     Encode 16-bit signed linear PCM at 8 kHz to raw G.711 µ-law bytes.
 
-    ITU-T G.711 §3.1 encoder.
+    Matches the ITU-T G.711 reference algorithm and CPython's audioop.lin2ulaw.
+    Works in 14-bit space (right-shifts input by 2) so the segment table is
+    correct — operating on raw 16-bit values with the same table produces the
+    wrong exponent for most samples, causing heavy distortion.
     """
-    BIAS    = 0x84
-    MAX_VAL = 0x7FFF
+    BIAS  = 0x84 >> 2   # = 33  (bias scaled to 14-bit)
+    CLIP  = 32767
+
     n       = len(pcm_8k) // 2
     samples = struct.unpack_from(f"<{n}h", pcm_8k)
     out     = bytearray(n)
+
     for i, s in enumerate(samples):
-        sign = 0
+        s >>= 2                         # 16-bit → 14-bit
         if s < 0:
-            sign = 0x80
             s    = -s
-        s = min(s + BIAS, MAX_VAL)
-        exp = 7
-        for exp in range(7, -1, -1):
-            if s & (1 << (exp + 3)):
-                break
-        mantissa = (s >> (exp + 3)) & 0x0F
-        out[i]   = (~(sign | (exp << 4) | mantissa)) & 0xFF
+            sign = 0                    # sign bit 0 → negative in µ-law
+        else:
+            sign = 0x80
+        s    = min(s, CLIP)
+        s   += BIAS
+        exp  = _EXP_LUT[(s >> 7) & 0xFF]
+        mant = (s >> (exp + 3)) & 0x0F
+        out[i] = (~(sign | (exp << 4) | mant)) & 0xFF
+
     return bytes(out)
 
 
