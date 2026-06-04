@@ -3,56 +3,40 @@ api/speaker.py — OpenAI TTS synthesis for the CU voice financial coach.
 
 Public API
 ----------
-synthesize_speech(text: str) -> bytes
-    Convert text to MP3 bytes via OpenAI TTS (model tts-1, voice nova).
-    Cached phrases are returned from an in-process LRU cache without an API
-    call.  All other text is synthesised on demand and not cached (call
-    responses are too varied to benefit from caching).
+synthesize_speech(text) -> bytes
+    Returns raw 16-bit PCM audio at 24 000 Hz mono.
+    Cached for warmup phrases; fresh synthesis for all other text.
 
-to_mulaw_8k(mp3_bytes: bytes) -> bytes
-    Transcode MP3 → G.711 µ-law 8 000 Hz mono.  Twilio Media Streams requires
-    mulaw; this function is called by main.py before streaming audio back.
+to_mulaw_8k(pcm_bytes) -> bytes
+    Downsample 24 kHz PCM → 8 kHz and encode to G.711 µ-law.
+    Pure Python — no pydub, no ffmpeg, no audioop.
 
-Design notes
-------------
-Voice: "nova" — warm, gender-neutral, conversational.  OpenAI's recommendation
-for customer-service and financial guidance use-cases.
+synthesize_to_wav(text) -> bytes
+    Returns a complete WAV file (RIFF header + PCM).
+    Used for the static opening greeting served to Twilio via <Play>.
 
-Model: "tts-1" (not "tts-1-hd") — optimised for low latency on short utterances
-(< 30 s).  For phone-line audio quality the HD model provides no audible
-benefit over a mulaw 8 kHz channel.
+Design
+------
+OpenAI TTS supports response_format="pcm" which returns raw signed 16-bit
+little-endian PCM at 24 000 Hz mono.  Receiving PCM directly eliminates the
+MP3 → PCM decode step and removes the pydub/ffmpeg dependency entirely.
 
-Cache strategy
---------------
-A small set of phrases (greetings, hold messages, error messages) recurs on
-every call.  These are pre-cached using _WARMUP_PHRASES at module import if
-PREWARM_TTS=true is set (default false — callers can trigger it from the
-FastAPI lifespan event).  All other phrases are NOT cached — LLM responses
-vary enough that caching them wastes memory with essentially zero hit rate.
+Downsampling 24 kHz → 8 kHz uses simple averaging of every 3 samples
+(factor = 3).  This is sufficient for telephone-quality voice — the bandwidth
+of a mulaw phone channel is ~3.5 kHz, well below the 4 kHz Nyquist limit of
+8 kHz sampling.
 
-The cache is a plain dict keyed by the normalised phrase text; it lives for
-the lifetime of the process.  This is intentional: TTS output for a fixed
-phrase is deterministic, so there is no staleness concern.
-
-Mulaw conversion
-----------------
-pydub + ffmpeg handle the MP3 → PCM → mulaw pipeline.  ffmpeg must be on PATH
-or FFMPEG_PATH must point to the binary.  A RuntimeError is raised at first
-call if ffmpeg is unavailable so the failure is surfaced at startup (via the
-lifespan pre-warm) rather than mid-call.
-
-If pydub/ffmpeg are not available, to_mulaw_8k falls back to returning the raw
-MP3 bytes with a warning.  Twilio will reject them, but the call pipeline
-continues rather than crashing.
+G.711 µ-law encoding is implemented from the ITU-T G.711 §3.1 algorithm.
 """
 
 from __future__ import annotations
 
-import hashlib
 import io
 import logging
 import os
 import re
+import struct
+import wave
 from typing import Optional
 
 from openai import AsyncOpenAI
@@ -63,56 +47,40 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-TTS_MODEL:  str = os.getenv("TTS_MODEL",  "tts-1")
-TTS_VOICE:  str = os.getenv("TTS_VOICE",  "nova")
-TTS_FORMAT: str = "mp3"
+TTS_MODEL:       str = os.getenv("TTS_MODEL", "tts-1")
+TTS_VOICE:       str = os.getenv("TTS_VOICE", "nova")
 
-# Set to "true" in the environment to pre-synthesise WARMUP_PHRASES at startup.
-PREWARM_TTS: bool = os.getenv("PREWARM_TTS", "false").lower() == "true"
+PCM_SAMPLE_RATE: int = 24_000   # OpenAI TTS PCM output rate (fixed)
+MULAW_RATE:      int = 8_000    # Twilio mulaw rate (fixed)
+DOWNSAMPLE_FACTOR = PCM_SAMPLE_RATE // MULAW_RATE   # = 3
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Phrases to pre-synthesise (and cache) at startup
+# Warmup phrases — cached as PCM on first call (or at startup if PREWARM_TTS)
 # ─────────────────────────────────────────────────────────────────────────────
 
 _WARMUP_PHRASES: list[str] = [
-    # Opening
     "Thank you for calling. I'm your AI financial coach. How can I help you today?",
-    # Hold / transfer
     "Please hold for just a moment.",
     "Let me connect you with a specialist who can help.",
     "I'm transferring you to our financial counseling team now.",
     "I'm connecting you with a member services representative.",
-    # Errors / recovery
     "I'm sorry, I didn't catch that. Could you say it again?",
     "I'm having a bit of trouble hearing you. Could you repeat that?",
     "I'm sorry, I'm having a technical issue. Please hold for a moment.",
-    # Crisis
     (
         "I hear that things are really hard right now. Please know you're not alone. "
         "I'm connecting you with someone who can help. "
         "You can also call 988, the Suicide and Crisis Lifeline, anytime."
     ),
-    # Closing
     "Thank you for calling. Take care.",
     "Is there anything else I can help you with today?",
 ]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# In-process phrase cache  {normalised_text: mp3_bytes}
-# ─────────────────────────────────────────────────────────────────────────────
-
+# In-process cache: normalised phrase text → raw PCM bytes (24 kHz)
 _tts_cache: dict[str, bytes] = {}
 
 
 def _cache_key(text: str) -> str:
-    """
-    Normalise text and return a stable cache key.
-
-    Strips leading/trailing whitespace and collapses internal whitespace so
-    minor formatting differences don't cause cache misses on identical phrases.
-    The key is the normalised string itself (not a hash) for readability in
-    debug logs.
-    """
     return re.sub(r"\s+", " ", text.strip())
 
 
@@ -137,105 +105,73 @@ def _get_client() -> AsyncOpenAI:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MP3 → mulaw 8 kHz conversion
+# PCM → mulaw (pure Python, no external deps)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _check_ffmpeg() -> bool:
-    """Return True if pydub can find ffmpeg / avconv."""
-    try:
-        from pydub.utils import get_encoder_name  # type: ignore[import]
-        get_encoder_name("mp3")                   # raises if not found
-        return True
-    except Exception:
-        return False
-
-
-def to_mulaw_8k(mp3_bytes: bytes) -> bytes:
+def _downsample(pcm_24k: bytes) -> bytes:
     """
-    Transcode MP3 audio to G.711 µ-law 8 000 Hz mono (Twilio Media Streams
-    format).
+    Downsample 24 kHz 16-bit mono PCM to 8 kHz by averaging groups of 3 samples.
 
-    Parameters
-    ----------
-    mp3_bytes : raw MP3 data as returned by the OpenAI TTS API.
-
-    Returns
-    -------
-    bytes : raw µ-law encoded audio at 8 000 Hz, 8-bit, mono.
-            No WAV header — Twilio expects raw PCM or raw mulaw in its
-            media stream, base64-encoded.
-
-    Falls back to returning mp3_bytes unchanged if pydub/ffmpeg is
-    unavailable (Twilio will reject this, but the pipeline won't crash).
+    Returns 16-bit signed little-endian PCM at 8 000 Hz.
     """
-    try:
-        from pydub import AudioSegment  # type: ignore[import]
-    except ImportError:
-        logger.warning(
-            "pydub is not installed — to_mulaw_8k returning MP3 bytes. "
-            "Install pydub + ffmpeg for correct Twilio audio: pip install pydub"
-        )
-        return mp3_bytes
-
-    try:
-        # Decode MP3 → raw PCM via pydub (uses ffmpeg under the hood)
-        audio = AudioSegment.from_file(io.BytesIO(mp3_bytes), format="mp3")
-
-        # Resample to 8 000 Hz mono 16-bit (the canonical PCM format for G.711)
-        audio = (
-            audio
-            .set_frame_rate(8_000)
-            .set_channels(1)
-            .set_sample_width(2)    # 16-bit = 2 bytes
-        )
-
-        pcm_bytes = audio.raw_data
-
-        # PCM → µ-law via audioop (available on Python < 3.13) or pure Python
-        try:
-            import audioop  # type: ignore[import]
-            return audioop.lin2ulaw(pcm_bytes, 2)
-        except ImportError:
-            # Pure-Python G.711 µ-law encoder for Python 3.13+
-            return _pcm_to_mulaw_pure(pcm_bytes)
-
-    except Exception as exc:
-        logger.error("to_mulaw_8k: transcoding failed — %s", exc)
-        return mp3_bytes
+    n = len(pcm_24k) // 2
+    samples = struct.unpack_from(f"<{n}h", pcm_24k)
+    out = bytearray()
+    for i in range(0, n - DOWNSAMPLE_FACTOR + 1, DOWNSAMPLE_FACTOR):
+        avg = sum(samples[i : i + DOWNSAMPLE_FACTOR]) // DOWNSAMPLE_FACTOR
+        avg = max(-32768, min(32767, avg))
+        out += struct.pack("<h", avg)
+    return bytes(out)
 
 
-def _pcm_to_mulaw_pure(pcm_bytes: bytes) -> bytes:
+def _pcm_to_mulaw(pcm_8k: bytes) -> bytes:
     """
-    Encode 16-bit signed linear PCM to G.711 µ-law (Python 3.13+ fallback).
+    Encode 16-bit signed linear PCM at 8 kHz to raw G.711 µ-law bytes.
 
-    Based on ITU-T G.711 §3.1 encoder algorithm.
+    ITU-T G.711 §3.1 encoder.
     """
-    import struct
-
-    MULAW_BIAS = 0x84
-    MULAW_MAX  = 0x7FFF
-
-    out = bytearray(len(pcm_bytes) // 2)
-    samples = struct.unpack_from(f"<{len(out)}h", pcm_bytes)
-
-    for i, sample in enumerate(samples):
+    BIAS    = 0x84
+    MAX_VAL = 0x7FFF
+    n       = len(pcm_8k) // 2
+    samples = struct.unpack_from(f"<{n}h", pcm_8k)
+    out     = bytearray(n)
+    for i, s in enumerate(samples):
         sign = 0
-        if sample < 0:
-            sign   = 0x80
-            sample = -sample
-        sample = min(sample + MULAW_BIAS, MULAW_MAX)
-
-        # Find the exponent (position of highest set bit above bias)
+        if s < 0:
+            sign = 0x80
+            s    = -s
+        s = min(s + BIAS, MAX_VAL)
         exp = 7
         for exp in range(7, -1, -1):
-            if sample & (1 << (exp + 3)):
+            if s & (1 << (exp + 3)):
                 break
-
-        mantissa = (sample >> (exp + 3)) & 0x0F
-        mulaw    = ~(sign | (exp << 4) | mantissa) & 0xFF
-        out[i]   = mulaw
-
+        mantissa = (s >> (exp + 3)) & 0x0F
+        out[i]   = (~(sign | (exp << 4) | mantissa)) & 0xFF
     return bytes(out)
+
+
+def to_mulaw_8k(pcm_24k: bytes) -> bytes:
+    """
+    Convert raw 24 kHz 16-bit PCM (from OpenAI TTS) to G.711 µ-law at 8 kHz.
+
+    Pure Python — no pydub, no ffmpeg, no audioop.
+    Called synchronously from main.py after synthesize_speech().
+    """
+    if not pcm_24k:
+        return b""
+    pcm_8k = _downsample(pcm_24k)
+    return _pcm_to_mulaw(pcm_8k)
+
+
+def _pcm_to_wav(pcm_24k: bytes) -> bytes:
+    """Wrap raw 24 kHz PCM in a standard WAV container (for static file serving)."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)           # 16-bit
+        wf.setframerate(PCM_SAMPLE_RATE)
+        wf.writeframes(pcm_24k)
+    return buf.getvalue()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -244,69 +180,51 @@ def _pcm_to_mulaw_pure(pcm_bytes: bytes) -> bytes:
 
 async def synthesize_speech(text: str) -> bytes:
     """
-    Convert text to MP3 bytes using OpenAI TTS (tts-1, nova voice).
+    Convert text to raw 16-bit PCM at 24 000 Hz mono via OpenAI TTS.
 
-    Cache behaviour
-    ---------------
-    If the normalised text matches a previously cached phrase, the cached MP3
-    bytes are returned immediately — no API call is made.  Only the fixed
-    phrases in _WARMUP_PHRASES are ever cached; dynamic coach responses are
-    synthesised fresh every time.
-
-    Parameters
-    ----------
-    text : the plain-text string to speak.  Should already be Markdown-free
-           and ≤ 80 words (enforced upstream by coach.py / guardrails.py).
-
-    Returns
-    -------
-    bytes : raw MP3 audio data.  Pass through to_mulaw_8k() before streaming
-            back to Twilio.
+    Returns cached PCM for warmup phrases; calls the API for all other text.
+    Pass the result to to_mulaw_8k() before streaming to Twilio.
     """
     if not text or not text.strip():
-        logger.warning("synthesize_speech called with empty text — returning silence.")
+        logger.warning("synthesize_speech: empty text — returning silence.")
         return b""
 
     key = _cache_key(text)
-
-    # ── Cache hit ─────────────────────────────────────────────────────────────
     if key in _tts_cache:
-        logger.debug("TTS cache hit  chars=%d  key=%.40s…", len(key), key)
+        logger.debug("TTS cache hit  chars=%d", len(key))
         return _tts_cache[key]
 
-    # ── OpenAI TTS call ───────────────────────────────────────────────────────
-    logger.debug(
-        "TTS synthesising  model=%s  voice=%s  chars=%d",
-        TTS_MODEL, TTS_VOICE, len(text),
-    )
+    logger.debug("TTS  model=%s  voice=%s  chars=%d", TTS_MODEL, TTS_VOICE, len(text))
 
     try:
         response = await _get_client().audio.speech.create(
             model=TTS_MODEL,
-            voice=TTS_VOICE,            # type: ignore[arg-type]
+            voice=TTS_VOICE,       # type: ignore[arg-type]
             input=text,
-            response_format=TTS_FORMAT, # type: ignore[arg-type]
+            response_format="pcm", # type: ignore[arg-type]
         )
-        mp3_bytes: bytes = response.content
+        pcm_bytes: bytes = response.content
     except Exception as exc:
         logger.error("TTS API error: %s", exc)
         raise
 
-    logger.debug(
-        "TTS done  chars=%d  mp3_bytes=%d",
-        len(text), len(mp3_bytes),
-    )
+    logger.debug("TTS done  chars=%d  pcm_bytes=%d", len(text), len(pcm_bytes))
+    return pcm_bytes
 
-    return mp3_bytes
+
+async def synthesize_to_wav(text: str) -> bytes:
+    """
+    Synthesise text and return a complete WAV file.
+
+    Used by main.py to generate the static opening greeting
+    (served to Twilio via <Play> over HTTP).
+    """
+    pcm = await synthesize_speech(text)
+    return _pcm_to_wav(pcm)
 
 
 async def prewarm_cache() -> None:
-    """
-    Pre-synthesise all phrases in _WARMUP_PHRASES and store in _tts_cache.
-
-    Called from the FastAPI lifespan startup handler in main.py when
-    PREWARM_TTS=true.  Runs all TTS calls concurrently for fast startup.
-    """
+    """Pre-synthesise warmup phrases concurrently at startup."""
     import asyncio
 
     async def _warm_one(phrase: str) -> None:
@@ -314,22 +232,16 @@ async def prewarm_cache() -> None:
         if key in _tts_cache:
             return
         try:
-            mp3 = await synthesize_speech(phrase)
-            _tts_cache[key] = mp3
+            _tts_cache[key] = await synthesize_speech(phrase)
             logger.debug("TTS pre-warmed  chars=%d", len(phrase))
         except Exception as exc:
-            logger.warning("TTS pre-warm failed for phrase %.40r: %s", phrase, exc)
+            logger.warning("TTS pre-warm failed %.40r: %s", phrase, exc)
 
-    logger.info("TTS: pre-warming %d cached phrases…", len(_WARMUP_PHRASES))
+    logger.info("TTS: pre-warming %d phrases…", len(_WARMUP_PHRASES))
     await asyncio.gather(*(_warm_one(p) for p in _WARMUP_PHRASES))
     logger.info("TTS: pre-warm complete  cached=%d", len(_tts_cache))
 
 
 def get_cached_phrase(text: str) -> Optional[bytes]:
-    """
-    Return cached MP3 bytes for an exact phrase match, or None if not cached.
-
-    Useful for main.py to play the opening greeting without an async call on
-    the hot path before the first utterance.
-    """
+    """Return cached PCM for a warmup phrase, or None."""
     return _tts_cache.get(_cache_key(text))

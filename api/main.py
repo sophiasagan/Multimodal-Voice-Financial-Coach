@@ -37,7 +37,7 @@ from .context_builder import build_context
 from .guardrails import check_guardrails
 from .member_resolver import resolve_member
 from .session_store import SessionStore
-from .speaker import synthesize_speech, to_mulaw_8k
+from .speaker import synthesize_speech, synthesize_to_wav, to_mulaw_8k
 from .transcriber import transcribe
 
 logger = logging.getLogger(__name__)
@@ -57,8 +57,8 @@ OPENING_MESSAGE = (
     "What's on your mind?"
 )
 
-# Generated once at startup; served as a static file so Twilio can <Play> it.
-OPENING_AUDIO_PATH = Path("static/opening.mp3")
+# Generated once at startup; served as a static WAV file so Twilio can <Play> it.
+OPENING_AUDIO_PATH = Path("static/opening.wav")
 
 # ── Silence-detection parameters ─────────────────────────────────────────────
 # Twilio Media Streams sends 20 ms mulaw frames (160 bytes at 8 kHz).
@@ -127,12 +127,16 @@ async def lifespan(app: FastAPI):
     """
     # 1. Opening audio ──────────────────────────────────────────────────────
     OPENING_AUDIO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # Remove stale mp3 from previous deploys (switched to WAV format).
+    _old_mp3 = OPENING_AUDIO_PATH.parent / "opening.mp3"
+    if _old_mp3.exists():
+        _old_mp3.unlink()
     if not OPENING_AUDIO_PATH.exists():
         if os.getenv("OPENAI_API_KEY"):
             try:
                 logger.info("Generating opening audio via TTS…")
-                audio_bytes = await synthesize_speech(OPENING_MESSAGE)
-                OPENING_AUDIO_PATH.write_bytes(audio_bytes)
+                wav_bytes = await synthesize_to_wav(OPENING_MESSAGE)
+                OPENING_AUDIO_PATH.write_bytes(wav_bytes)
                 logger.info("Opening audio saved → %s", OPENING_AUDIO_PATH)
             except Exception as exc:
                 logger.warning("Could not pre-generate opening audio: %s — will synthesise on first call.", exc)
