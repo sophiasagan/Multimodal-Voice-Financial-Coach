@@ -1,0 +1,171 @@
+{
+  "mem_test_001": {
+    "accounts": {
+      "total_balance": 10347.23,
+      "membership_since": "2023-03-12",
+      "direct_deposit_active": true,
+      "products": [
+        { "type": "checking", "balance": 1847.23 },
+        { "type": "savings",  "balance": 8500.00 }
+      ]
+    },
+    "twin": {
+      "health_score": 72,
+      "churn_score": 0.09,
+      "product_propensities": { "cd": 0.81, "auto_loan": 0.34 },
+      "behavioral_summary": "Regular bi-weekly direct deposits. Spends heavily on dining and entertainment late in the pay period, leaving checking below $500 about 40% of the time.",
+      "next_best_action": "Offer 12-month CD at 4.75% APY to put idle savings to work."
+    }
+  },
+  "mem_test_002": {
+    "accounts": {
+      "total_balance": 33660.50,
+      "membership_since": "2017-08-21",
+      "direct_deposit_active": true,
+      "products": [
+        { "type": "checking", "balance": 3210.50 },
+        { "type": "savings",  "balance": 12000.00 },
+        {
+          "type": "loan",
+          "label": "Auto Loan — 2022 Honda CR-V",
+          "balance": 18450.00,
+          "original_amount": 28000.00,
+          "rate_apr": 7.49,
+          "monthly_payment": 524.00,
+          "next_payment_date": "2026-06-15",
+          "payoff_date": "2029-06-15"
+        }
+      ]
+    },
+    "twin": {
+      "health_score": 68,
+      "churn_score": 0.14,
+      "product_propensities": { "mortgage": 0.62, "heloc": 0.45 },
+      "behavioral_summary": "Consistent on-time loan payments for 7 years. Carries a healthy savings buffer but has not increased savings rate despite three pay raises.",
+      "next_best_action": "Discuss refinancing auto loan — current rate 7.49% vs today's 5.99% new-vehicle rate saves ~$28/month."
+    }
+  },
+  "mem_test_003": {
+    "accounts": {
+      "total_balance": 64200.00,
+      "membership_since": "2009-11-04",
+      "direct_deposit_active": true,
+      "products": [
+        { "type": "checking", "balance": 4200.00 },
+        { "type": "savings",  "balance": 35000.00 },
+        {
+          "type": "cd",
+          "label": "18-Month CD",
+          "balance": 25000.00,
+          "rate_apy": 4.65,
+          "maturity_date": "2026-06-20",
+          "auto_renew": false
+        }
+      ]
+    },
+    "twin": {
+      "health_score": 88,
+      "churn_score": 0.04,
+      "product_propensities": { "cd": 0.93, "money_market": 0.71 },
+      "behavioral_summary": "15-year member with no missed payments. Prefers fixed-rate products and calls before making any major financial move.",
+      "next_best_action": "Offer loyalty-rate 12-month CD at 4.85% APY (0.10% loyalty bonus) on the $25K renewal — decision window closes June 20."
+    }
+  },
+  "mem_test_004": {
+    "accounts": {
+      "total_balance": 365900.00,
+      "membership_since": "2014-05-30",
+      "direct_deposit_active": true,
+      "products": [
+        { "type": "checking", "balance": 8900.00 },
+        { "type": "savings",  "balance": 45000.00 },
+        {
+          "type": "loan",
+          "label": "30-Year Fixed Mortgage",
+          "balance": 312000.00,
+          "rate_apr": 6.875,
+          "monthly_payment": 2148.00,
+          "next_payment_date": "2026-07-01",
+          "payoff_date": "2052-06-01"
+        },
+        {
+          "type": "heloc",
+          "label": "Home Equity Line of Credit",
+          "credit_limit": 60000.00,
+          "balance_owed": 0.00,
+          "available": 60000.00,
+          "rate_apr": 6.75
+        }
+      ]
+    },
+    "twin": {
+      "health_score": 85,
+      "churn_score": 0.06,
+      "product_propensities": { "heloc_draw": 0.72, "investment": 0.55 },
+      "behavioral_summary": "High-income household, always pays ahead of schedule. Has a HELOC with zero draw — likely unaware of the rate or availability.",
+      "next_best_action": "Introduce HELOC for planned kitchen renovation — $60K available at 6.75% variable, interest-only option available."
+    }
+  },
+  "mem_test_005": {
+    "accounts": {
+      "total_balance": 9850.00,
+      "membership_since": "2025-01-15",
+      "direct_deposit_active": false,
+      "products": [
+        { "type": "checking", "balance": 650.00, "label": "Student Checking" },
+        { "type": "savings",  "balance": 1200.00 },
+        {
+          "type": "loan",
+          "label": "Personal Loan — Debt Consolidation",
+          "balance": 8000.00,
+          "original_amount": 10000.00,
+          "rate_apr": 14.99,
+          "monthly_payment": 238.00,
+          "next_payment_date": "2026-06-22",
+          "payoff_date": "2030-01-22"
+        }
+      ]
+    },
+    "twin": {
+      "health_score": 45,
+      "churn_score": 0.31,
+      "product_propensities": { "direct_deposit": 0.78, "credit_builder": 0.65 },
+      "behavioral_summary": "New member, inconsistent income pattern — deposits vary $200-$800 per month. Has missed two payments in the past year but self-cured both times.",
+      "next_best_action": "Offer skip-a-payment option if member raises hardship. Enroll in free financial wellness counseling to build budget discipline."
+    }
+  },
+  "mem_test_006": {
+    "accounts": {
+      "total_balance": 174500.00,
+      "membership_since": "2004-02-17",
+      "direct_deposit_active": true,
+      "products": [
+        { "type": "checking", "balance": 6500.00, "label": "Senior Checking" },
+        { "type": "savings",  "balance": 18000.00 },
+        {
+          "type": "cd",
+          "label": "12-Month CD",
+          "balance": 50000.00,
+          "rate_apy": 4.75,
+          "maturity_date": "2026-08-15",
+          "auto_renew": false
+        },
+        {
+          "type": "cd",
+          "label": "60-Month CD",
+          "balance": 100000.00,
+          "rate_apy": 4.25,
+          "maturity_date": "2027-12-01",
+          "auto_renew": true
+        }
+      ]
+    },
+    "twin": {
+      "health_score": 91,
+      "churn_score": 0.02,
+      "product_propensities": { "cd_ladder": 0.89, "money_market": 0.67 },
+      "behavioral_summary": "20-year member on fixed retirement income (Social Security + pension). CD-heavy strategy. Conservative — prefers guaranteed returns over market exposure.",
+      "next_best_action": "Discuss CD laddering for the $50K August maturity to smooth income across the year — stagger into 3-month, 6-month, and 12-month CDs."
+    }
+  }
+}

@@ -47,8 +47,15 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-P31_BASE_URL: str = os.getenv("P31_API_BASE_URL", "https://api.p31financial.com/v1")
-P31_API_KEY:  str = os.getenv("P31_API_KEY", "")
+P31_BASE_URL:    str  = os.getenv("P31_API_BASE_URL", "https://api.p31financial.com/v1")
+P31_API_KEY:     str  = os.getenv("P31_API_KEY", "")
+# Set USE_TEST_DATA=true to load account data from data/test_accounts.json
+# instead of calling the P31 API. Automatically enabled when P31_API_KEY is
+# not set so demo calls always have rich context.
+USE_TEST_DATA:   bool = (
+    os.getenv("USE_TEST_DATA", "false").lower() == "true"
+    or not P31_API_KEY
+)
 
 # Shared by _fetch_accounts and _fetch_twin; created once per module load.
 # connect_timeout=3s, read_timeout=5s — must finish well within Twilio's
@@ -60,6 +67,28 @@ GENERIC_CONTEXT = (
     "account details could not be retrieved at this time. Provide general "
     "financial guidance only."
 )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test data (used when USE_TEST_DATA=true or P31_API_KEY is not set)
+# ─────────────────────────────────────────────────────────────────────────────
+
+import json as _json
+from pathlib import Path as _Path
+
+_TEST_DATA_PATH = _Path(__file__).resolve().parent.parent / "data" / "test_accounts.json"
+_TEST_DATA: dict[str, Any] = {}
+
+def _load_test_data() -> None:
+    global _TEST_DATA
+    try:
+        _TEST_DATA = _json.loads(_TEST_DATA_PATH.read_text(encoding="utf-8"))
+        logger.debug("context_builder: loaded test data for %d members", len(_TEST_DATA))
+    except FileNotFoundError:
+        logger.warning("context_builder: test data file not found at %s", _TEST_DATA_PATH)
+    except Exception as exc:
+        logger.warning("context_builder: could not load test data: %s", exc)
+
+_load_test_data()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -246,13 +275,22 @@ async def build_context(member: Optional[dict]) -> str:
     last_name   = member.get("last_name", "")
     full_name   = f"{first_name} {last_name}".strip()
 
-    logger.debug("build_context: fetching data for member %s", member_id)
+    logger.debug("build_context: fetching data for member %s  test_mode=%s", member_id, USE_TEST_DATA)
 
-    # ── Parallel API calls ────────────────────────────────────────────────────
-    accounts_data, twin_data = await asyncio.gather(
-        _fetch_accounts(member_id),
-        _fetch_twin(member_id),
-    )
+    # ── Data source: test fixture or P31 API ──────────────────────────────────
+    if USE_TEST_DATA and member_id in _TEST_DATA:
+        accounts_data = _TEST_DATA[member_id].get("accounts", {})
+        twin_data     = _TEST_DATA[member_id].get("twin",     {})
+        logger.debug("build_context: using test data for %s", member_id)
+    elif USE_TEST_DATA:
+        # Member not in test fixture — return generic guidance
+        logger.debug("build_context: member %s not in test data — generic context", member_id)
+        return GENERIC_CONTEXT
+    else:
+        accounts_data, twin_data = await asyncio.gather(
+            _fetch_accounts(member_id),
+            _fetch_twin(member_id),
+        )
 
     # ── Accounts section ──────────────────────────────────────────────────────
     products       = accounts_data.get("products", [])
