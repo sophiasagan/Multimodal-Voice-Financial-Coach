@@ -304,25 +304,28 @@ async def voice_stream(ws: WebSocket) -> None:
 
         for i, offset in enumerate(range(0, len(mulaw_bytes), CHUNK)):
             payload = base64.b64encode(mulaw_bytes[offset : offset + CHUNK]).decode()
-            await ws.send_text(json.dumps({
-                "event":     "media",
-                "streamSid": stream_sid,
-                "media":     {"payload": payload},
-            }))
+            try:
+                await ws.send_text(json.dumps({
+                    "event":     "media",
+                    "streamSid": stream_sid,
+                    "media":     {"payload": payload},
+                }))
+            except Exception:
+                return  # WebSocket closed (member hung up) — stop sending silently
 
-            # Sleep until the wall-clock time for the NEXT chunk so we
-            # pace at exactly real-time regardless of send latency.
             target = t_start + (i + 1) * CHUNK_DURATION
             sleep  = target - time.monotonic()
             if sleep > 0.001:
                 await asyncio.sleep(sleep)
 
-        # Mark frame signals end of playback to Twilio.
-        await ws.send_text(json.dumps({
-            "event":     "mark",
-            "streamSid": stream_sid,
-            "mark":      {"name": "response_end"},
-        }))
+        try:
+            await ws.send_text(json.dumps({
+                "event":     "mark",
+                "streamSid": stream_sid,
+                "mark":      {"name": "response_end"},
+            }))
+        except Exception:
+            pass
 
     async def _handle_utterance(raw_mulaw: bytes) -> None:
         """
@@ -400,17 +403,18 @@ async def voice_stream(ws: WebSocket) -> None:
                 # ── 7. Stream audio back ─────────────────────────────────
                 await _send_audio(mulaw_bytes)
 
+            except WebSocketDisconnect:
+                return  # member hung up mid-pipeline — no fallback needed
             except Exception as exc:
-                logger.exception("[%s] Pipeline error: %s", call_sid, exc)
-                # Keep the call alive with a graceful fallback utterance.
+                logger.warning("[%s] Pipeline error: %s", call_sid, exc)
                 try:
-                    fallback_mp3   = await synthesize_speech(
+                    fallback_pcm   = await synthesize_speech(
                         "I'm sorry, I didn't catch that. Could you say it again?"
                     )
-                    fallback_mulaw = await to_mulaw_8k(fallback_mp3)
+                    fallback_mulaw = to_mulaw_8k(fallback_pcm)
                     await _send_audio(fallback_mulaw)
                 except Exception:
-                    pass  # silence is better than a crash
+                    pass
 
     # ── main WebSocket receive loop ────────────────────────────────────────
     try:
